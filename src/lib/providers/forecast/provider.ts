@@ -1,0 +1,5 @@
+import type { DestinationForecast,ForecastHour,SurfDestination } from "@/lib/domain/types";
+import type { MarineProvider } from "../marine/types";
+import type { WeatherProvider } from "../weather/types";
+export interface SurfForecastProvider { getForecast(destination:SurfDestination):Promise<DestinationForecast>; }
+export class CombinedSurfForecastProvider implements SurfForecastProvider { constructor(private readonly marine:MarineProvider,private readonly weather:WeatherProvider){} async getForecast(destination:SurfDestination):Promise<DestinationForecast>{const [marine,weather]=await Promise.all([this.marine.getForecast(destination),this.weather.getForecast(destination)]),weatherByTime=new Map(weather.hours.map(hour=>[hour.time,hour])),hours:ForecastHour[]=marine.hours.map(hour=>({...hour,...(weatherByTime.get(hour.time)??{}),time:hour.time}));return{destinationId:destination.id,timezone:destination.timezone,fetchedAt:[marine.fetchedAt,weather.fetchedAt].sort().at(-1)!,provider:`${marine.provider}+${weather.provider}`,source:"live",hours};} }
