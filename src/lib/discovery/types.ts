@@ -1,6 +1,7 @@
 import type { DiscoveryRunStats, DestinationForecast, SurfDestination, SurfWatch, TripOpportunity } from "@/lib/domain/types";
 
 export interface OpportunityRepository {
+  saveForecast(destination: SurfDestination, forecast: DestinationForecast): Promise<void>;
   getPrevious(identityKey: string): Promise<TripOpportunity | null>;
   saveOpportunity(opportunity: TripOpportunity): Promise<TripOpportunity>;
   saveSnapshot(opportunity: TripOpportunity): Promise<void>;
@@ -9,7 +10,6 @@ export interface OpportunityRepository {
 }
 
 export interface DiscoveryRepository extends OpportunityRepository {
-  saveForecast(destination: SurfDestination, forecast: DestinationForecast): Promise<void>;
   listActiveWatches(): Promise<SurfWatch[]>;
   listActiveDestinations(): Promise<SurfDestination[]>;
   startRun(): Promise<string>;
