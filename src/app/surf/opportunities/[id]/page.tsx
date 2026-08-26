@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { SURF_DESTINATIONS } from "@/data/destinations";
+import { hasVerifiedCoreTravelPricing } from "@/lib/opportunities/pricing-verification";
 import { setOpportunityStatus } from "./actions";
 import type { FlightOption, LodgingOption } from "@/lib/domain/types";
 
@@ -14,7 +15,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{id:
 
   const { data:watch } = await client
     .from("surf_watches")
-    .select("max_all_in_cost_per_person")
+    .select("max_all_in_cost_per_person,flights_required,accommodation_required")
     .eq("id", o.watch_id)
     .maybeSingle();
 
@@ -25,16 +26,27 @@ export default async function OpportunityPage({ params }: { params: Promise<{id:
   const budget = watch ? Number(watch.max_all_in_cost_per_person) : undefined;
   const total = Number(o.total_per_person);
   const overBudget = budget ? Math.max(0, total - budget) : 0;
+  const verified = watch ? hasVerifiedCoreTravelPricing({
+    flightsRequired: Boolean(watch.flights_required),
+    accommodationRequired: Boolean(watch.accommodation_required),
+  }, flight, lodging) : false;
   const flightUrl = flight.bookingUrl ?? `https://www.google.com/search?q=${encodeURIComponent(`flights ${flight.origin} to ${flight.destination} ${o.departure_date} ${o.return_date}`)}`;
   const stayUrl = lodging.bookingUrl ?? `https://www.google.com/search?q=${encodeURIComponent(`${d?.name ?? "surf"} hotels ${o.departure_date} ${o.return_date}`)}`;
   const setStatus = setOpportunityStatus.bind(null, id);
+  const budgetLabel = budget
+    ? verified && total <= budget
+      ? `Verified within your $${Math.round(budget)} target`
+      : overBudget > 0
+        ? `Closest match · $${Math.round(overBudget)} over your $${Math.round(budget)} target`
+        : `Estimate under your $${Math.round(budget)} target · not fully live`
+    : undefined;
 
   return <main className="container" style={{padding:"62px 0 100px",maxWidth:900}}>
     <div className="eyebrow">{o.price_source} pricing · last detected {new Date(o.last_detected_at).toLocaleString()}</div>
     <h1 style={{fontSize:58,letterSpacing:"-.055em",margin:"12px 0 4px"}}>{d?.name ?? "Surf opportunity"}</h1>
     <p>{o.departure_date} → {o.return_date}</p>
     <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:14,marginTop:28}}>
-      <div className="panel" style={{padding:24}}><div className="eyebrow">All-in</div><strong style={{fontSize:38}}>${Math.round(total)}</strong><p>${Math.round(Number(o.total_group_cost))} group total</p>{budget && <p style={{fontSize:13,color:"var(--muted)"}}>{overBudget > 0 ? `Closest match · $${Math.round(overBudget)} over your $${Math.round(budget)} target` : `Within your $${Math.round(budget)} target`}</p>}</div>
+      <div className="panel" style={{padding:24}}><div className="eyebrow">All-in</div><strong style={{fontSize:38}}>${Math.round(total)}</strong><p>${Math.round(Number(o.total_group_cost))} group total</p>{budgetLabel && <p style={{fontSize:13,color:"var(--muted)"}}>{budgetLabel}</p>}</div>
       <div className="panel" style={{padding:24}}><div className="eyebrow">Surf score</div><strong style={{fontSize:38}}>{o.surf_score}/100</strong><p>{o.surf_window_start.slice(0,16).replace("T"," ")} → {o.surf_window_end.slice(11,16)} local</p></div>
     </section>
     <section className="panel" style={{padding:26,marginTop:14}}>
@@ -46,9 +58,9 @@ export default async function OpportunityPage({ params }: { params: Promise<{id:
         <a className="button" href={flightUrl} target="_blank" rel="noreferrer">{flight.bookingUrl ? "Book flight" : "Check live flight"}</a>
         <a className="button secondary" href={stayUrl} target="_blank" rel="noreferrer">{lodging.bookingUrl ? "Book stay" : "Check live stays"}</a>
       </div>
-      <p style={{fontSize:13,color:"var(--muted)"}}>This opportunity is labeled {o.price_source}. Estimated or mocked prices are not claimed to be live or bookable; use the live-search buttons to confirm current inventory before purchasing.</p>
+      <p style={{fontSize:13,color:"var(--muted)"}}>{verified ? "Required flight and lodging prices are live for this result." : "At least one required flight or lodging price is not live, so this total is not treated as a verified budget match."}</p>
       <h2>Price provenance</h2>
-      <p style={{fontSize:13,color:"var(--muted)"}}>Flight: {flight.provider} · {flight.priceSource} · fetched {new Date(flight.fetchedAt).toLocaleString()}<br/>Stay: {lodging.provider} · {lodging.priceSource} · fetched {new Date(lodging.fetchedAt).toLocaleString()}</p>
+      <p style={{fontSize:13,color:"var(--muted)"}}>Flight: {flight.provider} · {flight.priceSource} · fetched {new Date(flight.fetchedAt).toLocaleString()}{flight.offerExpiresAt ? ` · offer expires ${new Date(flight.offerExpiresAt).toLocaleString()}` : ""}<br/>Stay: {lodging.provider} · {lodging.priceSource} · fetched {new Date(lodging.fetchedAt).toLocaleString()}</p>
       <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:22}}>{o.status === "active" ? <><form action={setStatus}><input type="hidden" name="status" value="booked"/><button className="button secondary" type="submit">Mark booked</button></form><form action={setStatus}><input type="hidden" name="status" value="dismissed"/><button className="button secondary" type="submit">Dismiss</button></form></> : <form action={setStatus}><input type="hidden" name="status" value="active"/><button className="button secondary" type="submit">Restore opportunity</button></form>}</div>
     </section>
   </main>;
