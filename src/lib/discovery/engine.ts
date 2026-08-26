@@ -20,6 +20,7 @@ import { generateTripDates } from "@/lib/trips/date-generation";
 import { calculateTripCost } from "@/lib/trips/pricing";
 import { opportunityIdentity, shouldAlertOpportunity } from "@/lib/opportunities/dedupe";
 import { scoreOpportunity } from "@/lib/opportunities/scoring";
+import { hasVerifiedCoreTravelPricing } from "@/lib/opportunities/pricing-verification";
 import { localCalendarDate, localDateTimeHour } from "@/lib/utils";
 
 function combinePriceSource(sources: PriceSource[]): PriceSource {
@@ -272,7 +273,9 @@ export async function discoverForWatch(
       return {
         opportunity,
         destination,
-        inBudget: cost.allInPerPerson <= watch.maxAllInCostPerPerson,
+        inBudget:
+          cost.allInPerPerson <= watch.maxAllInCostPerPerson &&
+          hasVerifiedCoreTravelPricing(watch, flight, lodging),
       };
     },
   );
@@ -296,7 +299,7 @@ export async function discoverForWatch(
     const saved = await services.repository.saveOpportunity(opportunity);
 
     // Closest-match fallbacks are useful on-screen, but should not trigger a
-    // "deal found" email until they actually cross the user's budget.
+    // "deal found" email until they actually cross the user's budget with verified travel pricing.
     if (inBudget && previous && saved.id && !alertDecision.alert && !(await services.repository.hasSentAlert(saved.id))) {
       alertDecision = {
         alert: true,
