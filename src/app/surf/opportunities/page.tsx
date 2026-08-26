@@ -5,6 +5,7 @@ import { SupabaseDiscoveryRepository } from "@/lib/supabase/discovery-repository
 import { TransientOpportunityRepository } from "@/lib/discovery/transient-repository";
 import { discoverForWatch } from "@/lib/discovery/engine";
 import { createDiscoveryServices } from "@/lib/discovery/services";
+import { hasVerifiedCoreTravelPricing } from "@/lib/opportunities/pricing-verification";
 import { SURF_DESTINATIONS } from "@/data/destinations";
 import type {
   FlightOption,
@@ -133,9 +134,15 @@ function liveStaySearchUrl(opportunity: DisplayOpportunity) {
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
+function corePricingVerified(opportunity: DisplayOpportunity, watch?: SurfWatch) {
+  return watch
+    ? hasVerifiedCoreTravelPricing(watch, opportunity.flight, opportunity.lodging)
+    : false;
+}
+
 function trimToBudgetOrClosest(
   opportunities: DisplayOpportunity[],
-  budgetByWatch: Map<string, number>,
+  watchById: Map<string, SurfWatch>,
 ) {
   const grouped = new Map<string, DisplayOpportunity[]>();
   for (const opportunity of opportunities) {
@@ -146,9 +153,13 @@ function trimToBudgetOrClosest(
 
   return Array.from(grouped.values())
     .flatMap((group) => {
-      const budget = budgetByWatch.get(group[0].watchId);
-      if (!budget) return group;
-      const inBudget = group.filter((opportunity) => opportunity.totalPerPerson <= budget);
+      const watch = watchById.get(group[0].watchId);
+      if (!watch) return group;
+      const inBudget = group.filter(
+        (opportunity) =>
+          opportunity.totalPerPerson <= watch.maxAllInCostPerPerson &&
+          corePricingVerified(opportunity, watch),
+      );
       if (inBudget.length) return inBudget;
       return [...group].sort((a, b) => a.totalPerPerson - b.totalPerPerson).slice(0, 1);
     })
@@ -169,7 +180,7 @@ export default async function OpportunitiesPage({
   let scanWatch: SurfWatch | null = null;
   let scanFailed = false;
   let usedTransientScan = false;
-  const budgetByWatch = new Map<string, number>();
+  const watchById = new Map<string, SurfWatch>();
 
   if (client) {
     const { data: auth } = await client.auth.getUser();
@@ -181,7 +192,7 @@ export default async function OpportunitiesPage({
         .select("*")
         .eq("active", true);
       const watches = ((watchRows ?? []) as WatchRow[]).map(mapWatch);
-      for (const watch of watches) budgetByWatch.set(watch.id, watch.maxAllInCostPerPerson);
+      for (const watch of watches) watchById.set(watch.id, watch);
 
       scanWatch = params.watch ? watches.find((watch) => watch.id === params.watch) ?? null : null;
 
@@ -254,11 +265,26 @@ export default async function OpportunitiesPage({
     }
   }
 
-  opportunities = trimToBudgetOrClosest(opportunities, budgetByWatch);
+  opportunities = trimToBudgetOrClosest(opportunities, watchById);
   const scanHasBudgetMatch = Boolean(
-    scanWatch && opportunities.some((opportunity) => opportunity.totalPerPerson <= scanWatch!.maxAllInCostPerPerson),
+    scanWatch &&
+      opportunities.some(
+        (opportunity) =>
+          opportunity.totalPerPerson <= scanWatch!.maxAllInCostPerPerson &&
+          corePricingVerified(opportunity, scanWatch!),
+      ),
   );
-  const scanHasClosestMatch = Boolean(scanWatch && opportunities.length && !scanHasBudgetMatch);
+  const scanHasUnverifiedUnderBudget = Boolean(
+    scanWatch &&
+      opportunities.some(
+        (opportunity) =>
+          opportunity.totalPerPerson <= scanWatch!.maxAllInCostPerPerson &&
+          !corePricingVerified(opportunity, scanWatch!),
+      ),
+  );
+  const scanHasClosestMatch = Boolean(
+    scanWatch && opportunities.length && !scanHasBudgetMatch && !scanHasUnverifiedUnderBudget,
+  );
 
   return (
     <main className="container" style={{ padding: "62px 0 100px" }}>
@@ -272,7 +298,12 @@ export default async function OpportunitiesPage({
 
       {params.scan === "now" && !scanFailed && scanHasBudgetMatch && (
         <p className="panel" style={{ padding: 16 }}>
-          <strong>Found it.</strong> These trips fit your surf rules and your all-in budget right now.
+          <strong>Found it.</strong> These trips fit your surf rules and your all-in budget with live core travel pricing.
+        </p>
+      )}
+      {params.scan === "now" && !scanFailed && scanHasUnverifiedUnderBudget && scanWatch && (
+        <p className="panel" style={{ padding: 16 }}>
+          <strong>Promising, but not verified yet.</strong> The current estimate is under ${Math.round(scanWatch.maxAllInCostPerPerson)}, but at least one required flight or stay price is not live, so BookSurf is not calling it a budget match.
         </p>
       )}
       {params.scan === "now" && !scanFailed && scanHasClosestMatch && scanWatch && (
@@ -319,22 +350,32 @@ export default async function OpportunitiesPage({
         <div style={{ display: "grid", gap: 14, marginTop: 24 }}>
           {opportunities.map((opportunity) => {
             const destination = SURF_DESTINATIONS.find((item) => item.id === opportunity.destinationId);
-            const budget = budgetByWatch.get(opportunity.watchId);
+            const watch = watchById.get(opportunity.watchId);
+            const budget = watch?.maxAllInCostPerPerson;
+            const verified = corePricingVerified(opportunity, watch);
+            const verifiedInBudget = Boolean(
+              watch && verified && opportunity.totalPerPerson <= watch.maxAllInCostPerPerson,
+            );
             const overBudget = budget ? Math.max(0, opportunity.totalPerPerson - budget) : 0;
             const flightUrl = liveFlightSearchUrl(opportunity);
             const stayUrl = liveStaySearchUrl(opportunity);
+            const pricingLabel = verifiedInBudget
+              ? "Live core travel pricing · within budget"
+              : overBudget > 0
+                ? `Closest match · $${Math.round(overBudget)} over target`
+                : "Estimate under target · not fully live";
+
             return (
               <div key={`${opportunity.watchId}-${opportunity.destinationId}-${opportunity.departureDate}`} className="panel" style={{ padding: 24 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16 }}>
                   <div>
-                    <div className="eyebrow">
-                      {overBudget > 0
-                        ? `Closest match · $${Math.round(overBudget)} over target`
-                        : `${opportunity.priceSource} pricing · within budget`}
-                    </div>
+                    <div className="eyebrow">{pricingLabel}</div>
                     <h2 style={{ fontSize: 30, margin: "6px 0" }}>{destination?.name ?? "Surf trip"}</h2>
                     <div>
                       {opportunity.departureDate} → {opportunity.returnDate} · Surf {opportunity.surfScore}/100
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6 }}>
+                      Flight: {opportunity.flight.airline} · ${Math.round(opportunity.flight.totalFare)}/person · {opportunity.flight.priceSource}
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -355,10 +396,9 @@ export default async function OpportunitiesPage({
                     {opportunity.lodging.bookingUrl ? "Book stay" : "Check live stays"}
                   </a>
                 </div>
-                {opportunity.priceSource === "mocked" && (
+                {!verified && (
                   <p style={{ fontSize: 12, color: "var(--muted)", margin: "14px 0 0" }}>
-                    Trip total is an estimate until live travel providers are configured; use the live-search buttons
-                    to confirm current bookable prices.
+                    This total is not budget-verified because at least one required flight or lodging component is not live. BookSurf will not send a deal alert for it yet.
                   </p>
                 )}
               </div>
