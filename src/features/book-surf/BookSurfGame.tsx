@@ -5,72 +5,281 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./BookSurfGame.module.css";
 
 type Phase = "ready" | "playing" | "over";
-type Book = { x:number; w:number; h:number; phase:number; title:string; hue:number };
-type TimingGrade = "EARLY" | "GOOD" | "PERFECT" | "LATE";
-type Trick = "none" | "grab" | "reverse" | "spin";
+type RideState = "waiting-drop" | "riding";
+type Trick = "none" | "grab" | "spin";
+type Particle = { x:number; y:number; vx:number; vy:number; life:number; size:number };
 
 type Runtime = {
-  phase: Phase; x:number; speed:number; y:number; vy:number; angle:number; air:boolean;
-  left:boolean; right:boolean; jump:boolean; trickQueued:Trick; trick:Trick; trickRotation:number;
-  score:number; combo:number; best:number; last:number; books:Book[]; next:number;
-  takeoffMultiplier:number; takeoffGrade:TimingGrade; takeoffBook?:Book; takeoffT:number;
+  phase: Phase;
+  rideState: RideState;
+  last: number;
+  elapsed: number;
+  score: number;
+  best: number;
+  multiplier: number;
+  speed: number;
+  waveSpeed: number;
+  pocket: number;
+  line: number;
+  lineVelocity: number;
+  up: boolean;
+  down: boolean;
+  compress: boolean;
+  wasCompressing: boolean;
+  action: boolean;
+  air: boolean;
+  airY: number;
+  airVy: number;
+  angle: number;
+  rotation: number;
+  trick: Trick;
+  barrelTime: number;
+  inBarrel: boolean;
+  lastTurnAt: number;
+  particles: Particle[];
 };
 
-const TITLES=["MOBY-DICK","THE ODYSSEY","SEA CHANGE","THE TEMPEST","ISLANDS","WATERLOG","ON THE ROAD"];
 const TAU=Math.PI*2;
 const clamp=(n:number,a:number,b:number)=>Math.max(a,Math.min(b,n));
-const noise=(n:number)=>{const x=Math.sin(n*12.9898)*43758.5453;return x-Math.floor(x);};
 
-function makeBook(i:number,x:number,vw:number):Book{const r=noise(i*1.31+3.7);return{x,w:Math.max(300,vw*(.29+r*.11)),h:88+r*92,phase:r*TAU,title:TITLES[i%TITLES.length],hue:30+Math.round(r*26)};}
-function surface(book:Book,wx:number,base:number){const t=clamp((wx-book.x)/book.w,0,1),envelope=Math.sin(t*Math.PI),swell=Math.sin(t*Math.PI*1.65+book.phase)*.35+.65,curl=Math.pow(t,4)*.72;return base-book.h*envelope*swell-book.h*curl;}
-function timingFor(t:number):{grade:TimingGrade;mult:number}{
-  const d=Math.abs(t-.79);
-  if(d<=.045)return{grade:"PERFECT",mult:2};
-  if(d<=.11)return{grade:"GOOD",mult:1.45};
-  if(t<.79)return{grade:"EARLY",mult:.85};
-  return{grade:"LATE",mult:1.05};
+function waveTopY(x:number,vw:number,vh:number,lipX:number,height:number){
+  const base=vh*.79;
+  const shoulder=Math.max(80,vw-lipX);
+  const t=clamp((x-lipX)/shoulder,0,1);
+  const face=Math.pow(1-t,.62);
+  const undulation=Math.sin(t*Math.PI*1.2)*10;
+  return base-height*face+undulation;
 }
-function trickLabel(trick:Trick,rotation:number){if(trick==="grab")return"Indy Grab";if(trick==="reverse")return"Air Reverse";if(trick==="spin")return Math.abs(rotation)>Math.PI*1.7?"360 Spin":"180 Spin";return"Straight Air";}
-function trickBase(trick:Trick,rotation:number):number{if(trick==="grab")return 180;if(trick==="reverse")return 260;if(trick==="spin")return Math.abs(rotation)>Math.PI*1.7?420:240;return 90;}
+
+function spawnSpray(g:Runtime,x:number,y:number,power:number,direction:number){
+  const count=Math.round(10+power*22);
+  for(let i=0;i<count;i++){
+    const spread=(Math.random()-.5)*1.2;
+    const velocity=110+Math.random()*170*power;
+    g.particles.push({
+      x,
+      y,
+      vx:Math.cos(direction+spread)*velocity,
+      vy:Math.sin(direction+spread)*velocity-50,
+      life:.45+Math.random()*.55,
+      size:1.2+Math.random()*3,
+    });
+  }
+}
 
 export default function BookSurfGame(){
-  const canvasRef=useRef<HTMLCanvasElement|null>(null),raf=useRef<number|undefined>(undefined);
-  const game=useRef<Runtime>({phase:"ready",x:0,speed:185,y:0,vy:0,angle:0,air:false,left:false,right:false,jump:false,trickQueued:"none",trick:"none",trickRotation:0,score:0,combo:1,best:0,last:0,books:[],next:0,takeoffMultiplier:1,takeoffGrade:"GOOD",takeoffT:0});
-  const [phase,setPhase]=useState<Phase>("ready"),[score,setScore]=useState(0),[combo,setCombo]=useState(1),[best,setBest]=useState(0),[callout,setCallout]=useState("READ THE LIP"),[timing,setTiming]=useState("WAIT FOR IT");
+  const canvasRef=useRef<HTMLCanvasElement|null>(null);
+  const raf=useRef<number|undefined>(undefined);
+  const game=useRef<Runtime>({
+    phase:"ready",rideState:"waiting-drop",last:0,elapsed:0,score:0,best:0,multiplier:1,
+    speed:118,waveSpeed:205,pocket:.68,line:.92,lineVelocity:0,up:false,down:false,
+    compress:false,wasCompressing:false,action:false,air:false,airY:0,airVy:0,angle:0,rotation:0,
+    trick:"none",barrelTime:0,inBarrel:false,lastTurnAt:0,particles:[],
+  });
+  const [phase,setPhase]=useState<Phase>("ready");
+  const [score,setScore]=useState(0);
+  const [best,setBest]=useState(0);
+  const [multiplier,setMultiplier]=useState(1);
+  const [callout,setCallout]=useState("WAIT FOR THE FACE");
+  const [status,setStatus]=useState("PADDLE");
 
-  const reset=useCallback(()=>{const g=game.current;Object.assign(g,{phase:"playing",x:0,speed:185,y:0,vy:0,angle:0,air:false,left:false,right:false,jump:false,trickQueued:"none",trick:"none",trickRotation:0,score:0,combo:1,last:0,books:[],next:0,takeoffMultiplier:1,takeoffGrade:"GOOD",takeoffT:0});setPhase("playing");setScore(0);setCombo(1);setCallout("READ THE LIP");setTiming("WAIT FOR IT");},[]);
-  const queueJump=useCallback(()=>{if(game.current.phase==="playing")game.current.jump=true;},[]);
-  const queueTrick=useCallback((trick:Trick)=>{const g=game.current;if(g.phase!=="playing")return;if(g.air)g.trick=trick;else g.trickQueued=trick;},[]);
-
-  useEffect(()=>{const saved=Number(localStorage.getItem("booksurf-book-surf-best")||0);game.current.best=Number.isFinite(saved)?saved:0;setBest(game.current.best);},[]);
-  useEffect(()=>{const down=(e:KeyboardEvent)=>{if(["ArrowLeft","ArrowRight","ArrowUp","Space","KeyA","KeyD","KeyQ","KeyE","KeyS"].includes(e.code))e.preventDefault();if(e.code==="ArrowLeft"||e.code==="KeyA")game.current.left=true;if(e.code==="ArrowRight"||e.code==="KeyD")game.current.right=true;if(e.code==="Space"||e.code==="ArrowUp")queueJump();if(e.code==="KeyQ")queueTrick("reverse");if(e.code==="KeyE")queueTrick("spin");if(e.code==="KeyS")queueTrick("grab");if(e.code==="Enter"&&game.current.phase!=="playing")reset();};const up=(e:KeyboardEvent)=>{if(e.code==="ArrowLeft"||e.code==="KeyA")game.current.left=false;if(e.code==="ArrowRight"||e.code==="KeyD")game.current.right=false;};addEventListener("keydown",down,{passive:false});addEventListener("keyup",up);return()=>{removeEventListener("keydown",down);removeEventListener("keyup",up);};},[queueJump,queueTrick,reset]);
-
-  useEffect(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;const ctx=canvas.getContext("2d");if(!ctx)return;
-    const resize=()=>{const d=Math.min(devicePixelRatio||1,2),r=canvas.getBoundingClientRect();canvas.width=Math.round(r.width*d);canvas.height=Math.round(r.height*d);ctx.setTransform(d,0,0,d,0,0);};resize();addEventListener("resize",resize);
-    const ensure=(vw:number)=>{const g=game.current;if(!g.books.length){let x=-80;for(let i=0;i<8;i++){const b=makeBook(i,x,vw);g.books.push(b);x+=b.w*.82;}g.next=8;}while(g.books.at(-1)!.x+g.books.at(-1)!.w<g.x+vw*2.3){const p=g.books.at(-1)!,gap=1.03+noise(g.next*4.1)*.08,b=makeBook(g.next,p.x+p.w*gap,vw);g.books.push(b);g.next++;}while(g.books.length>10&&g.books[1].x+g.books[1].w<g.x-vw)g.books.shift();};
-    const drawBook=(b:Book,vw:number,base:number)=>{const g=game.current,sx=b.x-g.x+vw*.28,slices=48;ctx.beginPath();for(let i=0;i<=slices;i++){const t=i/slices,wx=b.x+t*b.w,x=wx-g.x+vw*.28,y=surface(b,wx,base);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.lineTo(sx+b.w,base+28);ctx.lineTo(sx,base+28);ctx.closePath();const grad=ctx.createLinearGradient(sx,base-b.h,sx+b.w,base);grad.addColorStop(0,"#fffaf0");grad.addColorStop(.55,"#f5ead2");grad.addColorStop(1,"#dfcba5");ctx.fillStyle=grad;ctx.fill();ctx.globalAlpha=.28;ctx.strokeStyle="#806b4f";for(let i=4;i<slices;i+=4){const t=i/slices,wx=b.x+t*b.w,x=wx-g.x+vw*.28,y=surface(b,wx,base);ctx.beginPath();ctx.moveTo(x,y+3);ctx.lineTo(sx+b.w*t,base+3);ctx.stroke();}ctx.globalAlpha=1;ctx.fillStyle=`hsl(${b.hue} 35% 24%)`;ctx.fillRect(sx-4,base+5,b.w+8,25);ctx.fillStyle="rgba(255,255,255,.78)";ctx.font="800 9px Arial";ctx.fillText(b.title,sx+12,base+21);const lipx=b.x+b.w*.79-g.x+vw*.28,lipy=surface(b,b.x+b.w*.79,base);ctx.strokeStyle="rgba(255,235,154,.9)";ctx.lineWidth=3;ctx.beginPath();ctx.arc(lipx,lipy,12,0,TAU);ctx.stroke();};
-    const drawSurfer=(x:number,y:number,a:number,g:Runtime)=>{ctx.save();ctx.translate(x,y-3);ctx.rotate(a);const board=ctx.createLinearGradient(-24,0,24,0);board.addColorStop(0,"#efb765");board.addColorStop(.5,"#fff0c9");board.addColorStop(1,"#c65b40");ctx.fillStyle=board;ctx.beginPath();ctx.ellipse(0,0,28,6,0,0,TAU);ctx.fill();ctx.strokeStyle="#081c19";ctx.lineWidth=5;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-4,-5);ctx.lineTo(-9,-21);ctx.lineTo(-2,-36);ctx.lineTo(8,-22);ctx.lineTo(12,-7);ctx.stroke();ctx.strokeStyle="#efc49d";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(-2,-30);ctx.lineTo(g.trick==="grab"?-21:-17,g.trick==="grab"?-4:-20);ctx.moveTo(4,-29);ctx.lineTo(17,-23);ctx.stroke();ctx.fillStyle="#e4b98e";ctx.beginPath();ctx.arc(-1,-42,7,0,TAU);ctx.fill();ctx.restore();};
-    const finish=()=>{const g=game.current;if(g.phase!=="playing")return;g.phase="over";const final=Math.floor(g.score);if(final>g.best){g.best=final;localStorage.setItem("booksurf-book-surf-best",String(final));setBest(final);}setScore(final);setPhase("over");};
-
-    const tick=(ts:number)=>{const r=canvas.getBoundingClientRect(),vw=r.width,vh=r.height,base=vh*.73,g=game.current,dt=g.last?Math.min(.033,(ts-g.last)/1000):0;g.last=ts;ensure(vw);const bg=ctx.createLinearGradient(0,0,0,vh);bg.addColorStop(0,"#071513");bg.addColorStop(.52,"#0d322d");bg.addColorStop(1,"#0a5b50");ctx.fillStyle=bg;ctx.fillRect(0,0,vw,vh);ctx.globalAlpha=.12;ctx.strokeStyle="#dce9dc";for(let i=0;i<17;i++){const y=vh*.2+i*18;ctx.beginPath();for(let x=0;x<=vw;x+=22){const yy=y+Math.sin(x*.013+ts*.00025+i)*4;x?ctx.lineTo(x,yy):ctx.moveTo(x,yy);}ctx.stroke();}ctx.globalAlpha=1;
-      if(g.phase==="playing"){
-        const steer=Number(g.right)-Number(g.left);g.speed=clamp(g.speed+steer*125*dt,145,340);g.speed+=2.5*dt;g.x+=g.speed*dt;const wx=g.x,b=g.books.find(v=>wx>=v.x&&wx<=v.x+v.w),sy=b?surface(b,wx,base):base+120,ay=b?surface(b,wx+7,base):sy,slope=Math.atan2(ay-sy,7),t=b?clamp((wx-b.x)/b.w,0,1):1;
-        if(!g.air){g.y=sy-7;g.angle+=(slope-g.angle)*Math.min(1,dt*9);if(b){const tm=timingFor(t);setTiming(`${tm.grade} · x${tm.mult.toFixed(2)}`);}if(g.jump){if(b){const tm=timingFor(t);g.takeoffMultiplier=tm.mult;g.takeoffGrade=tm.grade;g.takeoffBook=b;g.takeoffT=t;setCallout(`${tm.grade} TAKEOFF`);}g.air=true;g.vy=-285-g.speed*.18;g.y-=5;g.jump=false;g.trick=g.trickQueued;g.trickQueued="none";g.trickRotation=0;}}
-        else{g.vy+=690*dt;g.y+=g.vy*dt;if(g.trick==="reverse"){const dir=steer||1;g.angle+=dir*4.2*dt;g.trickRotation+=dir*4.2*dt;}else if(g.trick==="spin"){const dir=steer||1;g.angle+=dir*6.3*dt;g.trickRotation+=dir*6.3*dt;}else g.angle+=steer*2.4*dt;g.angle*=.998;if(b&&g.vy>0&&g.y>=sy-11){const rawDiff=Math.abs(Math.atan2(Math.sin(g.angle-slope),Math.cos(g.angle-slope))),landingMult=rawDiff<.18?1.7:rawDiff<.42?1.35:rawDiff<.75?1:0;if(!landingMult){setCallout("BOUNCED THE LANDING");g.combo=1;setCombo(1);finish();}else{const name=trickLabel(g.trick,g.trickRotation),basePts:number=trickBase(g.trick,g.trickRotation),points=Math.round(basePts*g.takeoffMultiplier*landingMult*g.combo);g.score+=points;g.combo=clamp(g.combo+(g.takeoffGrade==="PERFECT"&&rawDiff<.25?1:.5),1,10);setCombo(Math.floor(g.combo));setCallout(`${name} +${points} · ${rawDiff<.18?"STOMPED":"LANDED"}`);g.air=false;g.y=sy-7;g.trick="none";g.trickRotation=0;}}}
-        if(!b&&!g.air){g.air=true;g.vy=110;}if(g.y>vh+90)finish();g.score+=dt*g.speed*.035*g.combo;setScore(Math.floor(g.score));
-      }
-      for(const b of g.books)drawBook(b,vw,base);const px=vw*.28;if(g.phase==="ready"){const b=g.books[0];drawSurfer(px,surface(b,b.x+b.w*.44,base)-7,-.12,g);}else drawSurfer(px,g.y||base-120,g.angle,g);raf.current=requestAnimationFrame(tick);};
-    raf.current=requestAnimationFrame(tick);return()=>{removeEventListener("resize",resize);if(raf.current)cancelAnimationFrame(raf.current);};
+  const reset=useCallback(()=>{
+    const g=game.current;
+    Object.assign(g,{phase:"playing",rideState:"waiting-drop",last:0,elapsed:0,score:0,multiplier:1,speed:118,waveSpeed:205,pocket:.68,line:.92,lineVelocity:0,up:false,down:false,compress:false,wasCompressing:false,action:false,air:false,airY:0,airVy:0,angle:0,rotation:0,trick:"none",barrelTime:0,inBarrel:false,lastTurnAt:0,particles:[]});
+    setPhase("playing");setScore(0);setMultiplier(1);setCallout("WAIT FOR THE FACE");setStatus("PADDLE");
   },[]);
 
-  const hold=(key:"left"|"right",on:boolean)=>{game.current[key]=on;};
+  useEffect(()=>{
+    const saved=Number(localStorage.getItem("booksurf-book-surf-best")||0);
+    game.current.best=Number.isFinite(saved)?saved:0;setBest(game.current.best);
+  },[]);
+
+  const finish=useCallback((message:string)=>{
+    const g=game.current;if(g.phase!=="playing")return;
+    g.phase="over";setCallout(message);
+    const final=Math.floor(g.score);
+    if(final>g.best){g.best=final;localStorage.setItem("booksurf-book-surf-best",String(final));setBest(final);}
+    setScore(final);setPhase("over");
+  },[]);
+
+  const action=useCallback(()=>{if(game.current.phase==="playing")game.current.action=true;},[]);
+  const setTrick=useCallback((trick:Trick)=>{const g=game.current;if(g.phase==="playing"&&g.air)g.trick=trick;},[]);
+
+  useEffect(()=>{
+    const down=(e:KeyboardEvent)=>{
+      if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyA","KeyD","KeyS","KeyQ","KeyE"].includes(e.code))e.preventDefault();
+      const g=game.current;
+      if(e.code==="ArrowLeft"||e.code==="KeyA"||e.code==="ArrowUp")g.up=true;
+      if(e.code==="ArrowRight"||e.code==="KeyD")g.down=true;
+      if(e.code==="ArrowDown"||e.code==="KeyS")g.compress=true;
+      if(e.code==="Space")action();
+      if(e.code==="KeyQ")setTrick("grab");
+      if(e.code==="KeyE")setTrick("spin");
+      if(e.code==="Enter"&&g.phase!=="playing")reset();
+    };
+    const up=(e:KeyboardEvent)=>{
+      const g=game.current;
+      if(e.code==="ArrowLeft"||e.code==="KeyA"||e.code==="ArrowUp")g.up=false;
+      if(e.code==="ArrowRight"||e.code==="KeyD")g.down=false;
+      if(e.code==="ArrowDown"||e.code==="KeyS")g.compress=false;
+    };
+    addEventListener("keydown",down,{passive:false});addEventListener("keyup",up);
+    return()=>{removeEventListener("keydown",down);removeEventListener("keyup",up);};
+  },[action,reset,setTrick]);
+
+  useEffect(()=>{
+    const canvas=canvasRef.current;if(!canvas)return;
+    const ctx=canvas.getContext("2d");if(!ctx)return;
+    const resize=()=>{const d=Math.min(devicePixelRatio||1,2),r=canvas.getBoundingClientRect();canvas.width=Math.round(r.width*d);canvas.height=Math.round(r.height*d);ctx.setTransform(d,0,0,d,0,0);};
+    resize();addEventListener("resize",resize);
+
+    const drawWave=(vw:number,vh:number,g:Runtime)=>{
+      const px=vw*.34;
+      const waveHeight=Math.min(vh*.52,340);
+      const lipX=px-g.pocket*vw*.48;
+      const base=vh*.79;
+
+      const ocean=ctx.createLinearGradient(0,vh*.2,0,vh);ocean.addColorStop(0,"#0b4544");ocean.addColorStop(.55,"#0e7069");ocean.addColorStop(1,"#063c3b");ctx.fillStyle=ocean;ctx.fillRect(0,0,vw,vh);
+
+      ctx.beginPath();ctx.moveTo(0,base);
+      for(let x=0;x<=vw;x+=10){const y=waveTopY(x,vw,vh,lipX,waveHeight);ctx.lineTo(x,y);}ctx.lineTo(vw,vh);ctx.lineTo(0,vh);ctx.closePath();
+      const face=ctx.createLinearGradient(lipX,base-waveHeight,vw,base);face.addColorStop(0,"rgba(16,111,105,.95)");face.addColorStop(.55,"rgba(18,126,118,.9)");face.addColorStop(1,"rgba(20,95,90,.92)");ctx.fillStyle=face;ctx.fill();
+
+      ctx.globalAlpha=.18;ctx.strokeStyle="#d7fff8";ctx.lineWidth=1;
+      for(let i=0;i<12;i++){ctx.beginPath();for(let x=Math.max(0,lipX);x<vw;x+=18){const y=waveTopY(x,vw,vh,lipX,waveHeight)+16+i*14+Math.sin(x*.018+i)*4;x===Math.max(0,lipX)?ctx.moveTo(x,y):ctx.lineTo(x,y);}ctx.stroke();}
+      ctx.globalAlpha=1;
+
+      const tubeSize=clamp((.58-g.pocket)*2.4,0,1);
+      if(tubeSize>0){
+        const curlReach=130+tubeSize*150;
+        ctx.beginPath();ctx.moveTo(lipX-12,base-waveHeight+8);ctx.bezierCurveTo(lipX+25,base-waveHeight-38,lipX+curlReach,base-waveHeight+18,lipX+curlReach*1.05,base-waveHeight+105);ctx.bezierCurveTo(lipX+curlReach*.73,base-waveHeight+68,lipX+curlReach*.36,base-waveHeight+54,lipX-12,base-waveHeight+8);ctx.fillStyle="rgba(224,251,246,.88)";ctx.fill();
+        ctx.beginPath();ctx.arc(lipX+curlReach*.56,base-waveHeight+86,48+tubeSize*32,Math.PI*.98,Math.PI*1.93);ctx.strokeStyle="rgba(8,68,65,.75)";ctx.lineWidth=16;ctx.stroke();
+      }
+
+      ctx.fillStyle="rgba(238,255,252,.92)";for(let i=0;i<28;i++){const x=lipX-60+Math.random()*95,y=base-waveHeight+Math.random()*110;ctx.beginPath();ctx.arc(x,y,2+Math.random()*5,0,TAU);ctx.fill();}
+
+      return{px,lipX,base,waveHeight,topAtPlayer:waveTopY(px,vw,vh,lipX,waveHeight)};
+    };
+
+    const drawSurfer=(x:number,y:number,angle:number,g:Runtime)=>{
+      ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+      ctx.fillStyle="#f7d59d";ctx.beginPath();ctx.ellipse(0,0,32,5,0,0,TAU);ctx.fill();
+      ctx.strokeStyle="#062923";ctx.lineWidth=5;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-6,-5);ctx.lineTo(-11,-20);ctx.lineTo(-1,-36);ctx.lineTo(9,-20);ctx.lineTo(13,-6);ctx.stroke();
+      ctx.strokeStyle="#efc49d";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(-1,-31);ctx.lineTo(g.trick==="grab"?-22:-17,g.trick==="grab"?-3:-21);ctx.moveTo(4,-29);ctx.lineTo(18,-19);ctx.stroke();
+      ctx.fillStyle="#e6bb91";ctx.beginPath();ctx.arc(-1,-42,7,0,TAU);ctx.fill();ctx.restore();
+    };
+
+    const tick=(ts:number)=>{
+      const rect=canvas.getBoundingClientRect(),vw=rect.width,vh=rect.height,g=game.current,dt=g.last?Math.min(.032,(ts-g.last)/1000):0;g.last=ts;g.elapsed+=dt;
+      const wave=drawWave(vw,vh,g);
+
+      if(g.phase==="playing"){
+        if(g.rideState==="waiting-drop"){
+          g.pocket=clamp(g.pocket-.072*dt,.2,.7);
+          const grade=g.pocket>.56?"TOO EARLY":g.pocket>.46?"EARLY":g.pocket>.36?"GO":g.pocket>.29?"LATE":"CLOSING OUT";
+          setStatus(grade);
+          if(g.action){
+            g.action=false;
+            if(g.pocket<.285){finish("THE LIP LANDED ON YOU");}
+            else{
+              const clean=g.pocket>=.36&&g.pocket<=.46;
+              g.rideState="riding";g.line=.9;g.lineVelocity=clean?-1.35:-.9;g.speed=clean?245:g.pocket>.46?185:215;g.multiplier=clean?1.5:1;setMultiplier(g.multiplier);setCallout(clean?"CLEAN DROP · DRIVE TO THE BOTTOM":"MAKE THE DROP");setStatus("ON RAIL");
+            }
+          }
+        }else if(!g.air){
+          const up=Number(g.up),down=Number(g.down);
+          const faceControl=(g.speed/230)*(1.25+g.line*.4);
+          g.lineVelocity+=(up-down)*1.95*faceControl*dt;
+          g.lineVelocity-=.72*dt;
+          g.lineVelocity*=Math.pow(.985,dt*60);
+          const priorLine=g.line;g.line+=g.lineVelocity*dt;
+
+          const descending=Math.max(0,-g.lineVelocity),climbing=Math.max(0,g.lineVelocity);
+          g.speed+=descending*82*dt-climbing*42*dt;
+          g.speed-=11*dt;
+
+          if(g.compress){
+            g.speed-=4*dt;
+            if(g.line<.28&&descending>.15)g.speed+=18*dt;
+          }
+          if(g.wasCompressing&&!g.compress&&g.line<.24){g.speed+=28;setCallout("PUMPED OUT OF THE BOTTOM");}
+          g.wasCompressing=g.compress;
+
+          if(g.line<=.06){
+            if(g.up&&g.speed>150){
+              const power=clamp(g.speed/300,.45,1.2);g.line=.07;g.lineVelocity=.95+power*.95;g.speed*=.94;g.score+=Math.round(95*power*g.multiplier);spawnSpray(g,wave.px,wave.base-10,power,-2.45);setCallout("BOTTOM TURN");g.lastTurnAt=g.elapsed;
+            }else{g.line=.03;g.lineVelocity=0;g.speed-=70*dt;setCallout("BOGGING · SET THE RAIL");}
+          }
+
+          if(g.line>=.91){
+            const critical=clamp(1-Math.abs(g.pocket-.34)/.34,0,1);
+            if(g.action&&g.speed>225){
+              g.action=false;g.air=true;g.airY=wave.topAtPlayer-(wave.waveHeight*(1-g.line)) - 8;g.airVy=-190-g.speed*.32;g.angle=-.12;g.rotation=0;g.trick="none";g.line=.88;setCallout(critical>.6?"HIT THE LIP · AIR":"AIR OFF THE SHOULDER");
+            }else if(g.down){
+              const tooLate=g.pocket<.21;
+              if(tooLate){finish("CAUGHT BY THE LIP");}
+              else{
+                const power=clamp((g.speed-130)/170,.25,1.2),points=Math.round((180+critical*260)*power*g.multiplier);g.score+=points;g.line=.89;g.lineVelocity=-1.05-power*.7;g.speed*=.91;spawnSpray(g,wave.px,wave.topAtPlayer,power,-.8);setCallout(critical>.68?`CRITICAL SNAP +${points}`:`CUTBACK +${points}`);g.multiplier=clamp(g.multiplier+(critical>.65?.5:.2),1,8);setMultiplier(Number(g.multiplier.toFixed(1)));g.lastTurnAt=g.elapsed;
+              }
+            }else{g.line=.92;g.lineVelocity=Math.min(0,g.lineVelocity);g.speed-=34*dt;}
+          }
+
+          g.pocket+=((g.speed-g.waveSpeed)/430)*dt;
+          g.pocket=clamp(g.pocket,-.05,1.08);
+          if(g.pocket<.08){finish("THE FOAM BALL GOT YOU");}
+          if(g.pocket>1){g.speed-=25*dt;setCallout("TOO FAR ON THE SHOULDER · CUT BACK");}
+
+          const barrelZone=g.pocket>.14&&g.pocket<.42&&g.line>.42&&g.line<.73&&g.speed>185;
+          if(barrelZone){
+            if(!g.inBarrel){g.inBarrel=true;g.barrelTime=0;setCallout("PACKING THE TUBE");}
+            g.barrelTime+=dt;g.score+=dt*150*g.multiplier;setStatus(`BARREL ${g.barrelTime.toFixed(1)}s`);
+          }else if(g.inBarrel){
+            const bonus=Math.round(g.barrelTime*220*g.multiplier);g.score+=bonus;g.multiplier=clamp(g.multiplier+.75,1,8);setMultiplier(Number(g.multiplier.toFixed(1)));setCallout(`BARREL EXIT +${bonus}`);g.inBarrel=false;g.barrelTime=0;
+          }else setStatus(g.pocket<.28?"DEEP":"ON RAIL");
+
+          if(g.speed<95)finish("YOU LOST SPEED AND FELL BEHIND");
+          if(priorLine>.2&&g.line<=.2&&g.down)spawnSpray(g,wave.px,wave.base-18,.35,-2.6);
+        }else{
+          const steer=Number(g.down)-Number(g.up);g.airVy+=560*dt;g.airY+=g.airVy*dt;g.angle+=steer*3.3*dt;
+          if(g.trick==="spin"){g.angle+=5.8*dt;g.rotation+=5.8*dt;}
+          if(g.action)g.action=false;
+          const landingY=wave.topAtPlayer+wave.waveHeight*.12;
+          if(g.airVy>0&&g.airY>=landingY){
+            const diff=Math.abs(Math.atan2(Math.sin(g.angle+.12),Math.cos(g.angle+.12)));
+            if(diff>.72){finish("YOU DIDN'T MATCH THE LANDING");}
+            else{
+              const trickBase=g.trick==="spin"?(Math.abs(g.rotation)>5.2?520:320):g.trick==="grab"?240:180;
+              const landing=diff<.2?1.7:diff<.42?1.3:1;const critical=clamp(1-Math.abs(g.pocket-.3)/.4,.35,1);const pts=Math.round(trickBase*landing*critical*g.multiplier);g.score+=pts;g.multiplier=clamp(g.multiplier+(diff<.2?.6:.25),1,8);setMultiplier(Number(g.multiplier.toFixed(1)));setCallout(`${g.trick==="spin"?"AIR ROTATION":g.trick==="grab"?"INDY GRAB":"STRAIGHT AIR"} +${pts}${diff<.2?" · STOMPED":""}`);g.air=false;g.line=.82;g.lineVelocity=-.48;g.speed*=.9;g.trick="none";g.rotation=0;g.angle=0;
+            }
+          }
+        }
+
+        g.score+=dt*Math.max(0,g.speed-120)*.05*g.multiplier;setScore(Math.floor(g.score));
+      }
+
+      for(const p of g.particles){p.life-=dt;p.vy+=260*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;ctx.globalAlpha=clamp(p.life,0,1);ctx.fillStyle="#eafffb";ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,TAU);ctx.fill();}
+      ctx.globalAlpha=1;g.particles=g.particles.filter(p=>p.life>0);
+
+      const surferY=g.air?g.airY:wave.base-(wave.base-wave.topAtPlayer)*clamp(g.line,0,1)-8;
+      const surferAngle=g.air?g.angle:clamp(-g.lineVelocity*.18,-.45,.42);
+      drawSurfer(wave.px,surferY,surferAngle,g);
+
+      ctx.fillStyle="rgba(247,242,232,.72)";ctx.font="700 11px Arial";ctx.fillText(`SPEED ${Math.round(g.speed)}`,wave.px+46,vh*.91);ctx.fillText(`POCKET ${Math.round(g.pocket*100)}%`,wave.px+46,vh*.91+18);
+      raf.current=requestAnimationFrame(tick);
+    };
+
+    raf.current=requestAnimationFrame(tick);
+    return()=>{removeEventListener("resize",resize);if(raf.current)cancelAnimationFrame(raf.current);};
+  },[finish]);
+
+  const hold=(key:"up"|"down"|"compress",on:boolean)=>{game.current[key]=on;};
+
   return <main className={styles.shell}>
-    <canvas ref={canvasRef} className={styles.canvas} aria-label="Book Surf game canvas" />
+    <canvas ref={canvasRef} className={styles.canvas} aria-label="Book Surf surfing game canvas" />
     <header className={styles.topbar}><Link href="/" className={styles.brand}><strong>BOOKSURF</strong><span>Surf books. Book surf.</span></Link><div className={styles.actions}><Link href="/surf" className={styles.ghost}>Find surf</Link>{phase==="playing"?<button className={styles.solid} onClick={reset}>Restart</button>:null}</div></header>
-    {phase!=="ready"?<><div className={styles.hud}><div className={styles.pill}><small>Score</small><strong>{score.toLocaleString()}</strong></div><div className={styles.pill}><small>Multiplier</small><strong>x{combo}</strong></div><div className={styles.pill}><small>Best</small><strong>{best.toLocaleString()}</strong></div></div><div className={styles.timingHud}><strong>{timing}</strong><span>{callout}</span></div></>:null}
-    {phase==="ready"?<section className={styles.intro}><div className={styles.introCard}><p className={styles.kicker}>A BookSurf game</p><h1 className={styles.title}>BOOK<br/>SURF</h1><p className={styles.tagline}>Hit the lip at the right moment. Throw tricks. Stomp the landing. Build the multiplier.</p><button className={styles.start} onClick={reset}>Start surfing</button><p className={styles.instructions}>A / D trim · SPACE launch · Q air reverse · E spin · S grab · the gold ring is the critical section</p></div></section>:null}
-    {phase==="over"?<section className={styles.gameOver}><p className={styles.kicker}>You lost the plot</p><h2>{score.toLocaleString()} points</h2><p>Perfect takeoffs and clean landings build the line multiplier. Mistime the section and the score collapses.</p><button className={styles.start} onClick={reset}>Surf again</button></section>:null}
-    {phase==="playing"?<div className={styles.touchControls}><button className={styles.touchButton} onPointerDown={()=>hold("left",true)} onPointerUp={()=>hold("left",false)} onPointerCancel={()=>hold("left",false)}>←</button><button className={styles.touchButton} onPointerDown={()=>queueTrick("reverse")}>REV</button><button className={`${styles.touchButton} ${styles.touchJump}`} onPointerDown={queueJump}>AIR</button><button className={styles.touchButton} onPointerDown={()=>queueTrick("spin")}>SPIN</button><button className={styles.touchButton} onPointerDown={()=>hold("right",true)} onPointerUp={()=>hold("right",false)} onPointerCancel={()=>hold("right",false)}>→</button></div>:null}
+    {phase!=="ready"?<><div className={styles.hud}><div className={styles.pill}><small>Score</small><strong>{score.toLocaleString()}</strong></div><div className={styles.pill}><small>Line</small><strong>x{multiplier}</strong></div><div className={styles.pill}><small>Best</small><strong>{best.toLocaleString()}</strong></div></div><div className={styles.timingHud}><strong>{status}</strong><span>{callout}</span></div></>:null}
+    {phase==="ready"?<section className={styles.intro}><div className={styles.introCard}><p className={styles.kicker}>A BookSurf game</p><h1 className={styles.title}>BOOK<br/>SURF</h1><p className={styles.tagline}>Surf the wave, not a ramp. Time the drop. Use the bottom to make speed. Hit the pocket. Get barreled. Throw an air only when the section gives it to you.</p><button className={styles.start} onClick={reset}>Paddle out</button><p className={styles.instructions}>A / ← carve up · D / → drive down · S / ↓ compress & pump · SPACE commit the drop / hit the lip · Q grab · E spin</p></div></section>:null}
+    {phase==="over"?<section className={styles.gameOver}><p className={styles.kicker}>Wipeout</p><h2>{score.toLocaleString()} points</h2><p>{callout}</p><button className={styles.start} onClick={reset}>Paddle back out</button></section>:null}
+    {phase==="playing"?<div className={styles.touchControls}><button className={styles.touchButton} onPointerDown={()=>hold("up",true)} onPointerUp={()=>hold("up",false)} onPointerCancel={()=>hold("up",false)}>UP</button><button className={styles.touchButton} onPointerDown={()=>hold("compress",true)} onPointerUp={()=>hold("compress",false)} onPointerCancel={()=>hold("compress",false)}>PUMP</button><button className={`${styles.touchButton} ${styles.touchJump}`} onPointerDown={action}>GO</button><button className={styles.touchButton} onPointerDown={()=>hold("down",true)} onPointerUp={()=>hold("down",false)} onPointerCancel={()=>hold("down",false)}>DOWN</button></div>:null}
   </main>;
 }
