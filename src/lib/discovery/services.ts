@@ -1,5 +1,5 @@
 import { ConsoleAlertSender, ResendAlertSender } from "@/lib/alerts/email";
-import { StaticBoardProvider } from "@/lib/providers/boards/static-provider";
+import { createBoardProvider } from "@/lib/providers/boards/provider";
 import { CombinedSurfForecastProvider } from "@/lib/providers/forecast/provider";
 import { MockSurfForecastProvider } from "@/lib/providers/forecast/mock";
 import { createFlightProvider } from "@/lib/providers/flights/provider";
@@ -17,7 +17,7 @@ export function createDiscoveryServices(options?: { demo?: boolean }) {
     forecast,
     flights: createFlightProvider(),
     lodging: createLodgingProvider(),
-    boards: new StaticBoardProvider(),
+    boards: createBoardProvider(),
     transport: new StaticTransportProvider(),
     alerts: demo ? new ConsoleAlertSender() : new ResendAlertSender(),
   };
