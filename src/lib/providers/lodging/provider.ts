@@ -10,6 +10,6 @@ export function createLodgingProvider(): LodgingProvider {
 
   // Additional suppliers (Booking.com Demand, Expedia Rapid, direct hotel feeds)
   // plug into this list without changing discovery or pricing code.
-  if (!providers.length) providers.push(new MockLodgingProvider());
+  providers.push(new MockLodgingProvider());
   return providers.length === 1 ? providers[0] : new CompositeLodgingProvider(providers);
 }
