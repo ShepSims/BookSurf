@@ -15,6 +15,8 @@ export function createFlightProvider(): FlightProvider {
     providers.push(new TravelpayoutsFlightProvider(travelpayoutsToken, marker));
   }
 
-  if (!providers.length) providers.push(new MockFlightProvider());
+  // Keep a deterministic fallback so discovery still produces a clearly-labelled
+  // estimate when every external supplier is unavailable.
+  providers.push(new MockFlightProvider());
   return providers.length === 1 ? providers[0] : new CompositeFlightProvider(providers);
 }
