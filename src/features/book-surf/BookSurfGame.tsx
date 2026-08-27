@@ -1,1 +1,1 @@
-export { default } from "./BookSurfGameV3";
+export { default } from "./BookSurfFirstPerson";
