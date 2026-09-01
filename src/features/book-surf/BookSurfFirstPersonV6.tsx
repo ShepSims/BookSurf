@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import styles from "./BookSurfGame.module.css";
+import { getTrimAcceleration, getWipeoutReason, nextControlState } from "./surfPhysics";
 
 type Phase="ready"|"playing"|"over";
 type Kind="face"|"foam"|"mist"|"spray";
@@ -10,7 +11,7 @@ type Particle={kind:Kind;u:number;v:number;life:number;maxLife:number;size:numbe
 type Runtime={
   phase:Phase;last:number;t:number;speed:number;face:number;faceVel:number;bank:number;heading:number;trim:number;
   left:boolean;right:boolean;forward:boolean;back:boolean;pump:boolean;pumpCd:number;pocket:number;score:number;best:number;
-  particles:Particle[];faceSpawn:number;foamSpawn:number;mistSpawn:number;
+  particles:Particle[];faceSpawn:number;foamSpawn:number;mistSpawn:number;hudAt:number;statusText:string;statusUntil:number;
 };
 
 const TAU=Math.PI*2;
@@ -26,19 +27,20 @@ function spawn(g:Runtime,kind:Kind,seed:number,power=1){
 }
 function sprayBurst(g:Runtime,power:number){const count=10+Math.round(power*22),base=g.t*991;for(let i=0;i<count;i++)spawn(g,"spray",base+i*7.13,power)}
 
-export default function BookSurfFirstPersonV6(){
+export default function BookSurfGameCanvas(){
   const canvasRef=useRef<HTMLCanvasElement|null>(null),raf=useRef<number|undefined>(undefined);
-  const game=useRef<Runtime>({phase:"ready",last:0,t:0,speed:22,face:.58,faceVel:-.035,bank:0,heading:0,trim:0,left:false,right:false,forward:false,back:false,pump:false,pumpCd:0,pocket:.36,score:0,best:0,particles:[],faceSpawn:0,foamSpawn:0,mistSpawn:0});
+  const game=useRef<Runtime>({phase:"ready",last:0,t:0,speed:22,face:.58,faceVel:-.035,bank:0,heading:0,trim:0,left:false,right:false,forward:false,back:false,pump:false,pumpCd:0,pocket:.36,score:0,best:0,particles:[],faceSpawn:0,foamSpawn:0,mistSpawn:0,hudAt:0,statusText:"TRIM",statusUntil:0});
   const [phase,setPhase]=useState<Phase>("ready"),[score,setScore]=useState(0),[best,setBest]=useState(0),[status,setStatus]=useState("TRIM"),[hint,setHint]=useState("Wall left · shoulder right · stay near the pocket");
 
   useEffect(()=>{const b=Number(localStorage.getItem("booksurf-book-surf-best")||0);game.current.best=Number.isFinite(b)?b:0;setBest(game.current.best)},[]);
-  const reset=useCallback(()=>{Object.assign(game.current,{phase:"playing",last:0,t:0,speed:22,face:.58,faceVel:-.035,bank:0,heading:0,trim:0,left:false,right:false,forward:false,back:false,pump:false,pumpCd:0,pocket:.36,score:0,particles:[],faceSpawn:0,foamSpawn:0,mistSpawn:0});setPhase("playing");setScore(0);setStatus("TRIM");setHint("←/→ RAILS · ↑ FORWARD · ↓ STALL · SPACE PUMP")},[]);
+  const reset=useCallback(()=>{Object.assign(game.current,{phase:"playing",last:0,t:0,speed:22,face:.58,faceVel:-.035,bank:0,heading:0,trim:0,left:false,right:false,forward:false,back:false,pump:false,pumpCd:0,pocket:.36,score:0,particles:[],faceSpawn:0,foamSpawn:0,mistSpawn:0,hudAt:0,statusText:"TRIM",statusUntil:0});setPhase("playing");setScore(0);setStatus("TRIM");setHint("←/→ RAILS · ↑ FORWARD · ↓ STALL · SPACE PUMP")},[]);
   const finish=useCallback((m:string)=>{const g=game.current;if(g.phase!=="playing")return;g.phase="over";const s=Math.floor(g.score);if(s>g.best){g.best=s;localStorage.setItem("booksurf-book-surf-best",String(s));setBest(s)}setScore(s);setHint(m);setPhase("over")},[]);
 
   useEffect(()=>{
     const kd=(e:KeyboardEvent)=>{if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyA","KeyD","KeyW","KeyS"].includes(e.code))e.preventDefault();const g=game.current;if(e.code==="ArrowLeft"||e.code==="KeyA")g.left=true;if(e.code==="ArrowRight"||e.code==="KeyD")g.right=true;if(e.code==="ArrowUp"||e.code==="KeyW")g.forward=true;if(e.code==="ArrowDown"||e.code==="KeyS")g.back=true;if(e.code==="Space"&&!e.repeat)g.pump=true;if(e.code==="Enter"&&g.phase!=="playing")reset()};
     const ku=(e:KeyboardEvent)=>{const g=game.current;if(e.code==="ArrowLeft"||e.code==="KeyA")g.left=false;if(e.code==="ArrowRight"||e.code==="KeyD")g.right=false;if(e.code==="ArrowUp"||e.code==="KeyW")g.forward=false;if(e.code==="ArrowDown"||e.code==="KeyS")g.back=false};
-    addEventListener("keydown",kd,{passive:false});addEventListener("keyup",ku);return()=>{removeEventListener("keydown",kd);removeEventListener("keyup",ku)};
+    const release=()=>Object.assign(game.current,{left:false,right:false,forward:false,back:false,pump:false});
+    addEventListener("keydown",kd,{passive:false});addEventListener("keyup",ku);addEventListener("blur",release);return()=>{removeEventListener("keydown",kd);removeEventListener("keyup",ku);removeEventListener("blur",release)};
   },[reset]);
 
   useEffect(()=>{
@@ -67,22 +69,28 @@ export default function BookSurfFirstPersonV6(){
     const updateParticles=(g:Runtime,dt:number)=>{g.faceSpawn+=dt*(52+g.speed*1.4);while(g.faceSpawn>=1){spawn(g,"face",g.t*193+g.faceSpawn*17);g.faceSpawn-=1}g.foamSpawn+=dt*(14+clamp(.55-g.pocket,0,.55)*38);while(g.foamSpawn>=1){spawn(g,"foam",g.t*311+g.foamSpawn*23);g.foamSpawn-=1}g.mistSpawn+=dt*11;while(g.mistSpawn>=1){spawn(g,"mist",g.t*419+g.mistSpawn*31);g.mistSpawn-=1}const speedFactor=clamp(g.speed/22,.65,1.55);for(const p of g.particles){if(p.kind==="face"){const f=flow(p.u,p.v,g);p.u+=f.du*dt*speedFactor;p.v+=f.dv*dt;if(p.u>1.02||p.v>1.02){p.u=.015+rand(p.seed+g.t)*.18;p.v=.03+rand(p.seed+g.t+3)*.5}p.life-=dt;if(p.life<=0){p.u=.02+rand(p.seed+g.t)*.96;p.v=.05+rand(p.seed+g.t+1)*.88;p.life=p.maxLife}}else if(p.kind==="foam"){const f=flow(p.u,p.v,g);p.u+=f.du*dt*.45;p.v+=Math.abs(f.dv)*dt*.7+.08*dt;p.life-=dt}else if(p.kind==="mist"){p.u+=.018*dt;p.v-=.06*dt;p.life-=dt}else p.life-=dt}g.particles=g.particles.filter(p=>p.kind==="face"||p.life>0).slice(-620)};
 
     const tick=(ts:number)=>{const r=canvas.getBoundingClientRect(),vw=r.width,vh=r.height,g=game.current,dt=g.last?Math.min(.032,(ts-g.last)/1000):0;g.last=ts;g.t+=dt;if(g.phase==="playing"){
-      const rail=Number(g.left)-Number(g.right),target=rail*.88;g.bank+=(target-g.bank)*Math.min(1,dt*(rail?6.2:4.2));
-      const trimInput=Number(g.forward)-Number(g.back),targetTrim=trimInput*.92;g.trim+=(targetTrim-g.trim)*Math.min(1,dt*(trimInput?5.8:3.8));
+      Object.assign(g,nextControlState(g.bank,g.trim,g,dt));
       const hold=clamp(g.speed/27,.5,1.25),turn=-Math.sin(g.bank)*(.56+hold*.62);g.heading+=turn*dt;g.heading*=Math.pow(.997,dt*60);const drag=Math.abs(g.bank)*(.22+.25*hold)+g.bank*g.bank*.22;
       g.faceVel+=(Math.sin(g.bank)*g.speed*.0125-.15)*dt;g.faceVel*=Math.pow(.992,dt*60);g.face+=g.faceVel*dt;
       const descending=Math.max(0,-g.faceVel),climbing=Math.max(0,g.faceVel),steep=.62+smooth(clamp(g.face,0,1))*.82;
-      const forwardDrive=Math.max(0,g.trim)*(1.15+.35*descending),stallDrag=Math.max(0,-g.trim)*(2.2+.55*hold);g.speed+=(descending*12.6*steep-climbing*6.8-drag-.28+forwardDrive-stallDrag)*dt;
-      if(g.face<=.04){g.face=.04;if(g.bank>.15){g.faceVel=Math.abs(g.faceVel)*.58+.19;g.speed+=.75;setStatus("BOTTOM TURN · LEFT RAIL");sprayBurst(g,clamp(Math.abs(g.bank)*hold,.4,1))}else{g.faceVel=.05;g.speed-=.65;setStatus("TROUGH")}}
-      if(g.face>=.96){g.face=.96;g.faceVel=-Math.abs(g.faceVel)*.48-.08;setStatus(g.bank<-.16?"REDIRECT · RIGHT RAIL":"HIGH LINE");if(Math.abs(g.bank)>.18)sprayBurst(g,clamp(Math.abs(g.bank)*hold,.35,1))}
+      const trimAcceleration=getTrimAcceleration(g.trim,descending,hold);g.speed+=(descending*12.6*steep-climbing*6.8-drag-.28+trimAcceleration)*dt;
+      if(g.face<=.04){g.face=.04;if(g.bank>.15){g.faceVel=Math.abs(g.faceVel)*.58+.19;g.speed+=.75;g.statusText="BOTTOM TURN · LEFT RAIL";g.statusUntil=g.t+.7;sprayBurst(g,clamp(Math.abs(g.bank)*hold,.4,1))}else{g.faceVel=.05;g.speed-=.65}}
+      if(g.face>=.96){g.face=.96;g.faceVel=-Math.abs(g.faceVel)*.48-.08;g.statusText=g.bank<-.16?"REDIRECT · RIGHT RAIL":"HIGH LINE";g.statusUntil=g.t+.7;if(Math.abs(g.bank)>.18)sprayBurst(g,clamp(Math.abs(g.bank)*hold,.35,1))}
       const carve=Math.abs(g.bank)*hold*clamp(Math.abs(turn)*1.7,0,1);if(carve>.47&&Math.floor(g.t*12)!==Math.floor((g.t-dt)*12))sprayBurst(g,carve*.65);
-      g.pumpCd=Math.max(0,g.pumpCd-dt);if(g.pump){g.pump=false;if(g.pumpCd<=0){const transition=clamp(Math.abs(g.faceVel)*3.2,0,1),loaded=clamp(Math.abs(g.bank)*1.25,0,1),zone=1-smooth(clamp((g.face-.28)/.5,0,1)),eff=clamp(.1+transition*.35+loaded*.24+zone*.31,0,1);g.speed+=eff*2.45;g.score+=Math.round(eff*55);g.pumpCd=.34;setStatus(eff>.75?"PUMP · PERFECT":eff>.5?"PUMP · DRIVE":"PUMP · MISTIMED");if(eff>.52)sprayBurst(g,eff*.6)}}
-      if(Math.abs(g.trim)>.28)setStatus(g.trim>0?"WEIGHT FORWARD · DRIVE":"WEIGHT BACK · STALL");
-      const downLine=g.speed*Math.cos(g.heading);g.pocket+=((downLine-21.4)/170)*dt;g.pocket=clamp(g.pocket,-.08,1.05);if(g.pocket<.018)finish("THE FOAM BALL CAUGHT YOU");if(g.pocket>.92){g.speed-=1.25*dt;setStatus("TOO FAR ON THE SHOULDER")};if(g.speed<10.5)finish("YOU LOST TOO MUCH SPEED");g.score+=dt*(g.speed*.6+Math.abs(g.bank)*10);setScore(Math.floor(g.score));const trimLabel=g.trim>.2?"FORWARD":g.trim<-.2?"STALL":"NEUTRAL";setHint(`Speed ${g.speed.toFixed(1)} · Face ${Math.round(g.face*100)}% · ${g.bank>.12?"LEFT RAIL":g.bank<-.12?"RIGHT RAIL":"FLAT"} · ${trimLabel}`)
+      g.pumpCd=Math.max(0,g.pumpCd-dt);if(g.pump){g.pump=false;if(g.pumpCd<=0){const transition=clamp(Math.abs(g.faceVel)*3.2,0,1),loaded=clamp(Math.abs(g.bank)*1.25,0,1),zone=1-smooth(clamp((g.face-.28)/.5,0,1)),eff=clamp(.1+transition*.35+loaded*.24+zone*.31,0,1);g.speed+=eff*2.45;g.score+=Math.round(eff*55);g.pumpCd=.34;g.statusText=eff>.75?"PUMP · PERFECT":eff>.5?"PUMP · DRIVE":"PUMP · MISTIMED";g.statusUntil=g.t+.7;if(eff>.52)sprayBurst(g,eff*.6)}}
+      const downLine=g.speed*Math.cos(g.heading);g.pocket+=((downLine-21.4)/170)*dt;g.pocket=clamp(g.pocket,-.08,1.05);
+      const wipeout=getWipeoutReason(g.pocket,g.speed);
+      if(wipeout){finish(wipeout)}else{
+        if(g.pocket>.92){g.speed-=1.25*dt;if(g.t>=g.statusUntil)g.statusText="TOO FAR ON THE SHOULDER"}
+        else if(g.t>=g.statusUntil)g.statusText=Math.abs(g.trim)>.28?(g.trim>0?"WEIGHT FORWARD · DRIVE":"WEIGHT BACK · STALL"):"TRIM";
+        g.score+=dt*(g.speed*.6+Math.abs(g.bank)*10);
+        if(g.t>=g.hudAt){g.hudAt=g.t+.1;setScore(Math.floor(g.score));setStatus(g.statusText);const trimLabel=g.trim>.2?"FORWARD":g.trim<-.2?"STALL":"NEUTRAL";setHint(`Speed ${g.speed.toFixed(1)} · Face ${Math.round(g.face*100)}% · ${g.bank>.12?"LEFT RAIL":g.bank<-.12?"RIGHT RAIL":"FLAT"} · ${trimLabel}`)}
+      }
     }updateParticles(g,dt);drawMain(vw,vh,g);if(g.phase!=="ready")drawInset(vw,vh,g);raf.current=requestAnimationFrame(tick)};
     raf.current=requestAnimationFrame(tick);return()=>{removeEventListener("resize",resize);if(raf.current)cancelAnimationFrame(raf.current)};
   },[finish]);
 
   const hold=(k:"left"|"right"|"forward"|"back",v:boolean)=>{game.current[k]=v};
-  return <main className={styles.shell}><canvas ref={canvasRef} className={styles.canvas} aria-label="First-person left-hander surfing game with fore-aft trim"/><header className={styles.topbar}><Link href="/" className={styles.brand}><strong>BOOKSURF</strong><span>First-person carving prototype</span></Link><div className={styles.actions}><Link href="/surf" className={styles.ghost}>Find surf</Link>{phase==="playing"?<button className={styles.solid} onClick={reset}>Restart</button>:null}</div></header>{phase!=="ready"?<><div className={styles.hud}><div className={styles.pill}><small>Score</small><strong>{score.toLocaleString()}</strong></div><div className={styles.pill}><small>Status</small><strong>{status}</strong></div><div className={styles.pill}><small>Best</small><strong>{best.toLocaleString()}</strong></div></div><div className={styles.timingHud}><strong>LEFT-HANDER</strong><span>{hint}</span></div></>:null}{phase==="ready"?<section className={styles.intro}><div className={styles.introCard}><p className={styles.kicker}>Pocket POV</p><h1 className={styles.title}>READ<br/>THE WAVE</h1><p className={styles.tagline}>Rails control your carve. Shift your weight fore and aft to drive or stall in the pocket.</p><button className={styles.start} onClick={reset}>Take off</button><p className={styles.instructions}>←/→ rails · ↑ weight forward · ↓ stall · SPACE pump</p></div></section>:null}{phase==="over"?<section className={styles.gameOver}><p className={styles.kicker}>Wipeout</p><h2>{score.toLocaleString()} points</h2><p>{hint}</p><button className={styles.start} onClick={reset}>Take another wave</button></section>:null}{phase==="playing"?<div className={styles.touchControls}><button className={styles.touchButton} onPointerDown={()=>hold("left",true)} onPointerUp={()=>hold("left",false)} onPointerCancel={()=>hold("left",false)}>LEFT</button><button className={`${styles.touchButton} ${styles.touchJump}`} onPointerDown={()=>{game.current.pump=true}}>PUMP</button><button className={styles.touchButton} onPointerDown={()=>hold("right",true)} onPointerUp={()=>hold("right",false)} onPointerCancel={()=>hold("right",false)}>RIGHT</button></div>:null}</main>;
+  const holdProps=(key:"left"|"right"|"forward"|"back")=>({onPointerDown:(e:PointerEvent<HTMLButtonElement>)=>{e.currentTarget.setPointerCapture(e.pointerId);hold(key,true)},onPointerUp:()=>hold(key,false),onPointerCancel:()=>hold(key,false),onLostPointerCapture:()=>hold(key,false)});
+  return <main className={styles.shell}><canvas ref={canvasRef} className={styles.canvas} aria-label="First-person left-hander surfing game with fore-aft trim"/><header className={styles.topbar}><Link href="/" className={styles.brand}><strong>BOOKSURF</strong><span>First-person carving prototype</span></Link><div className={styles.actions}><Link href="/surf" className={styles.ghost}>Find surf</Link>{phase==="playing"?<button className={styles.solid} onClick={reset}>Restart</button>:null}</div></header>{phase!=="ready"?<><div className={styles.hud}><div className={styles.pill}><small>Score</small><strong>{score.toLocaleString()}</strong></div><div className={styles.pill}><small>Status</small><strong>{status}</strong></div><div className={styles.pill}><small>Best</small><strong>{best.toLocaleString()}</strong></div></div><div className={styles.timingHud}><strong>LEFT-HANDER</strong><span>{hint}</span></div></>:null}{phase==="ready"?<section className={styles.intro}><div className={styles.introCard}><p className={styles.kicker}>Pocket POV</p><h1 className={styles.title}>READ<br/>THE WAVE</h1><p className={styles.tagline}>Rails control your carve. Shift your weight fore and aft to drive or stall in the pocket.</p><button className={styles.start} onClick={reset}>Take off</button><p className={styles.instructions}>←/→ rails · ↑ weight forward · ↓ stall · SPACE pump</p></div></section>:null}{phase==="over"?<section className={styles.gameOver}><p className={styles.kicker}>Wipeout</p><h2>{score.toLocaleString()} points</h2><p>{hint}</p><button className={styles.start} onClick={reset}>Take another wave</button></section>:null}{phase==="playing"?<div className={styles.touchControls}><button className={styles.touchButton} {...holdProps("left")}>LEFT</button><button className={styles.touchButton} {...holdProps("back")}>STALL</button><button className={`${styles.touchButton} ${styles.touchJump}`} onPointerDown={()=>{game.current.pump=true}}>PUMP</button><button className={styles.touchButton} {...holdProps("forward")}>DRIVE</button><button className={styles.touchButton} {...holdProps("right")}>RIGHT</button></div>:null}</main>;
 }
