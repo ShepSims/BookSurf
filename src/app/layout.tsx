@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "BookSurf — Surf books. Book surf.",
-  description: "A surf-trip opportunity engine that finds the wave first and prices the trip second.",
+  description: "Surf through books worth reading and find surf trips worth taking.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -14,8 +14,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <header style={{borderBottom:"1px solid var(--line)", background:"rgba(251,252,250,.94)"}}>
           <div className="container" style={{height:72, display:"flex", alignItems:"center", justifyContent:"space-between"}}>
             <Link href="/" style={{fontWeight:950, letterSpacing:"-.04em", fontSize:24}}>BOOKSURF</Link>
-            <nav style={{display:"flex", gap:18, fontSize:14, fontWeight:800}}>
-              <Link href="/surf">Surf</Link><Link href="/surf/opportunities">Opportunities</Link><Link href="/account">Account</Link>
+            <nav style={{display:"flex", gap:18, fontSize:14, fontWeight:800, alignItems:"center"}}>
+              <Link href="/books">Books</Link><Link href="/surf">Surf trips</Link><Link href="/account">Account</Link>
             </nav>
           </div>
         </header>
