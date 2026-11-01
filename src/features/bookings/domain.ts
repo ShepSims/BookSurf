@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attributionSchema } from "@/features/acquisition/attribution";
 
 export const bookingRequestSchema=z.object({
  name:z.string().trim().min(2).max(120),
@@ -8,7 +9,8 @@ export const bookingRequestSchema=z.object({
  level:z.enum(["First timer","Beginner","Intermediate","Advanced","Mixed group"]),
  budget:z.string().trim().max(120).optional().default(""),
  notes:z.string().trim().max(2000).optional().default(""),
- website:z.string().max(200).optional().default("")
+ website:z.string().max(200).optional().default(""),
+ attribution:attributionSchema.optional()
 });
 export type BookingRequestInput=z.infer<typeof bookingRequestSchema>;
 export const bookingStatuses=["pending_operator","quoted","awaiting_payment","confirmed","declined","cancelled"] as const;
