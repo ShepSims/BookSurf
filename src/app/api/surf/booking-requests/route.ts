@@ -14,7 +14,7 @@ export async function POST(req:NextRequest){
   const db=createClient(NEXT_PUBLIC_SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false}});
   const {name,dates,guests,level,budget,notes}=body.data;
   const email=normalizeEmail(body.data.email);
-  const {data,error}=await db.from("surf_booking_requests").insert({name,email,dates,guests,skill_level:level,budget,notes,operator_slug:"baja-experience-tours",destination:"Baja California, Mexico"}).select("id").single();
+  const {data,error}=await db.from("surf_booking_requests").insert({name,email,dates,guests,skill_level:level,budget,notes,operator_slug:"baja-experience-tours",destination:"Baja California, Mexico",acquisition_attribution:body.data.attribution??{}}).select("id").single();
   if(error){console.error("Booking request insert failed",error.code);return NextResponse.json({error:"Could not save your request. Please try again."},{status:500,headers})}
   if(RESEND_API_KEY&&BOOKSURF_FROM_EMAIL){
    const resend=new Resend(RESEND_API_KEY);
