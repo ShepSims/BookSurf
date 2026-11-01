@@ -1,28 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { z } from "zod";
+import { bookingRequestSchema, normalizeEmail } from "@/features/bookings/domain";
 import { Resend } from "resend";
 
-const schema=z.object({
- name:z.string().trim().min(2).max(120),
- email:z.email().max(254),
- dates:z.string().trim().min(3).max(250),
- guests:z.coerce.number().int().min(1).max(20),
- level:z.enum(["First timer","Beginner","Intermediate","Advanced","Mixed group"]),
- budget:z.string().max(120).optional().default(""),
- notes:z.string().max(2000).optional().default(""),
- website:z.string().optional().default("")
-});
 const headers={"Cache-Control":"no-store"};
 export async function POST(req:NextRequest){
  try{
-  const body=schema.safeParse(await req.json());
+  const body=bookingRequestSchema.safeParse(await req.json());
   if(!body.success)return NextResponse.json({error:"Please check your trip details."},{status:400,headers});
   if(body.data.website)return NextResponse.json({ok:true},{headers});
   const {SUPABASE_SERVICE_ROLE_KEY,NEXT_PUBLIC_SUPABASE_URL,RESEND_API_KEY,BOOKSURF_FROM_EMAIL}=process.env;
   if(!SUPABASE_SERVICE_ROLE_KEY||!NEXT_PUBLIC_SUPABASE_URL)return NextResponse.json({error:"Booking requests are temporarily unavailable."},{status:503,headers});
   const db=createClient(NEXT_PUBLIC_SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false}});
-  const {name,email,dates,guests,level,budget,notes}=body.data;
+  const {name,dates,guests,level,budget,notes}=body.data;
+  const email=normalizeEmail(body.data.email);
   const {data,error}=await db.from("surf_booking_requests").insert({name,email,dates,guests,skill_level:level,budget,notes,operator_slug:"baja-experience-tours",destination:"Baja California, Mexico"}).select("id").single();
   if(error){console.error("Booking request insert failed",error.code);return NextResponse.json({error:"Could not save your request. Please try again."},{status:500,headers})}
   if(RESEND_API_KEY&&BOOKSURF_FROM_EMAIL){
