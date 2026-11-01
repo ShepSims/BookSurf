@@ -7,7 +7,9 @@ export default function BajaPage(){
  const [step,setStep]=useState(0);
  const [form,setForm]=useState({dates:"",guests:"2",level:"Intermediate",budget:"",name:"",email:"",notes:""});
  const set=(key:keyof typeof form,value:string)=>setForm(s=>({...s,[key]:value}));
- const message=`New Baja trip inquiry%0AName: ${encodeURIComponent(form.name)}%0AEmail: ${encodeURIComponent(form.email)}%0ADates: ${encodeURIComponent(form.dates)}%0AGuests: ${form.guests}%0ASkill: ${form.level}%0ABudget: ${encodeURIComponent(form.budget)}%0ANotes: ${encodeURIComponent(form.notes)}`;
+ const [copied,setCopied]=useState(false);
+ const message=`New Baja trip inquiry\nName: ${form.name}\nEmail: ${form.email}\nDates: ${form.dates}\nGuests: ${form.guests}\nSkill: ${form.level}\nBudget: ${form.budget}\nNotes: ${form.notes}`;
+ const mailto=`mailto:?subject=${encodeURIComponent("Baja surf trip inquiry")}&body=${encodeURIComponent(message)}`;
  return <main style={{background:sand,color:ink,minHeight:"100vh",fontFamily:"Georgia,serif"}}>
   <section style={{minHeight:"min(78vh,760px)",padding:"clamp(44px,8vw,110px) max(22px,8vw)",background:"linear-gradient(115deg,rgba(9,39,39,.84),rgba(11,65,68,.35)),url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=2000&q=85') center/cover",color:"#fff",display:"flex",flexDirection:"column",justifyContent:"center"}}>
    <div style={{font:"700 12px Arial",letterSpacing:".3em",textTransform:"uppercase"}}>BOOKSURF / PRIVATE EXPERIENCES / BAJA CALIFORNIA</div>
@@ -32,12 +34,12 @@ export default function BajaPage(){
       <label>Surf experience<select value={form.level} onChange={e=>set("level",e.target.value)}>{["First timer","Beginner","Intermediate","Advanced","Mixed group"].map(x=><option key={x}>{x}</option>)}</select></label>
       <label>Approximate total budget (optional)<input value={form.budget} onChange={e=>set("budget",e.target.value)} placeholder="e.g. $2,000 per person"/></label>
       <button className="button" onClick={()=>setStep(1)} disabled={!form.dates.trim()} style={{marginTop:10}}>Continue →</button>
-     </div>:<form onSubmit={e=>{e.preventDefault();window.location.href=`mailto:?subject=Baja%20surf%20trip%20inquiry&body=${message}`;}} style={{display:"grid",gap:19}}>
+     </div>:<form onSubmit={e=>{e.preventDefault();window.location.href=mailto;}} style={{display:"grid",gap:19}}>
       <label>Your name<input required value={form.name} onChange={e=>set("name",e.target.value)} autoComplete="name"/></label>
       <label>Email address<input required type="email" value={form.email} onChange={e=>set("email",e.target.value)} autoComplete="email"/></label>
       <label>Anything else we should know?<textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Dream waves, board preferences, accommodations…" style={{minHeight:110,padding:14,borderRadius:12,border:"1px solid #dce5e1",font:"inherit"}}/></label>
-      <p style={{fontSize:12,lineHeight:1.6,color:"#60736b"}}>This opens your email app with a prepared inquiry. It does not submit a reservation or charge your card. Add your BookSurf contact email as the recipient before sending.</p>
-      <div style={{display:"flex",gap:12,flexWrap:"wrap"}}><button type="button" className="button secondary" onClick={()=>setStep(0)}>← Back</button><button className="button" type="submit">Prepare my inquiry ↗</button></div>
+      <p style={{fontSize:12,lineHeight:1.6,color:"#60736b"}}>This prepares an inquiry for your email app. No reservation or payment is made. Add the BookSurf booking address before sending; the operator must confirm availability and pricing.</p>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap"}}><button type="button" className="button secondary" onClick={()=>setStep(0)}>← Back</button><button className="button" type="submit">Open email inquiry ↗</button><button type="button" className="button secondary" onClick={async()=>{try{await navigator.clipboard.writeText(message);setCopied(true)}catch{setCopied(false)}}}>{copied?"Copied inquiry":"Copy inquiry"}</button></div>
      </form>}
     </div>
    </div>
