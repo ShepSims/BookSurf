@@ -1,10 +1,13 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { parseAttribution, type Attribution } from "@/features/acquisition/attribution";
 import Link from "next/link";
 
 const ink="#173a36", sand="#f7f0e3";
 export default function BajaPage(){
  const [step,setStep]=useState(0);
+ const [attribution,setAttribution]=useState<Attribution|undefined>();
+ useEffect(()=>{try{const key="booksurf-first-touch";const stored=sessionStorage.getItem(key);if(stored){setAttribution(JSON.parse(stored) as Attribution);return}const params=new URLSearchParams(window.location.search);params.set("landing_path",window.location.pathname);const value=parseAttribution(params);sessionStorage.setItem(key,JSON.stringify(value));setAttribution(value)}catch{/* booking remains available without tracking */}},[]);
  const [form,setForm]=useState({dates:"",guests:"2",level:"Intermediate",budget:"",name:"",email:"",notes:""});
  const set=(key:keyof typeof form,value:string)=>setForm(s=>({...s,[key]:value}));
  const [copied,setCopied]=useState(false);
@@ -38,7 +41,7 @@ export default function BajaPage(){
       <label>Surf experience<select value={form.level} onChange={e=>set("level",e.target.value)}>{["First timer","Beginner","Intermediate","Advanced","Mixed group"].map(x=><option key={x}>{x}</option>)}</select></label>
       <label>Approximate total budget (optional)<input value={form.budget} onChange={e=>set("budget",e.target.value)} placeholder="e.g. $2,000 per person"/></label>
       <button className="button" onClick={()=>setStep(1)} disabled={!form.dates.trim()} style={{marginTop:10}}>Continue →</button>
-     </div>:<form onSubmit={async e=>{e.preventDefault();if(submitting)return;setSubmitting(true);setError("");try{const res=await fetch("/api/surf/booking-requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});const json=await res.json();if(!res.ok)throw new Error(json.error||"Unable to submit");setReference(json.reference||"submitted")}catch(err){setError(err instanceof Error?err.message:"Please try again.")}finally{setSubmitting(false)}}} style={{display:"grid",gap:19}}>
+     </div>:<form onSubmit={async e=>{e.preventDefault();if(submitting)return;setSubmitting(true);setError("");try{const res=await fetch("/api/surf/booking-requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,attribution})});const json=await res.json();if(!res.ok)throw new Error(json.error||"Unable to submit");setReference(json.reference||"submitted")}catch(err){setError(err instanceof Error?err.message:"Please try again.")}finally{setSubmitting(false)}}} style={{display:"grid",gap:19}}>
       <label>Your name<input required value={form.name} onChange={e=>set("name",e.target.value)} autoComplete="name"/></label>
       <label>Email address<input required type="email" value={form.email} onChange={e=>set("email",e.target.value)} autoComplete="email"/></label>
       <label>Anything else we should know?<textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Dream waves, board preferences, accommodations…" style={{minHeight:110,padding:14,borderRadius:12,border:"1px solid #dce5e1",font:"inherit"}}/></label>
