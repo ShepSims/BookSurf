@@ -32,11 +32,11 @@ export default function BajaPage(){
       <label>Surf experience<select value={form.level} onChange={e=>set("level",e.target.value)}>{["First timer","Beginner","Intermediate","Advanced","Mixed group"].map(x=><option key={x}>{x}</option>)}</select></label>
       <label>Approximate total budget (optional)<input value={form.budget} onChange={e=>set("budget",e.target.value)} placeholder="e.g. $2,000 per person"/></label>
       <button className="button" onClick={()=>setStep(1)} disabled={!form.dates.trim()} style={{marginTop:10}}>Continue →</button>
-     </div>:<form onSubmit={e=>{e.preventDefault();window.location.href=`mailto:hello@booksurf.com?subject=Baja%20surf%20trip%20inquiry&body=${message}`;}} style={{display:"grid",gap:19}}>
+     </div>:<form onSubmit={e=>{e.preventDefault();window.location.href=`mailto:?subject=Baja%20surf%20trip%20inquiry&body=${message}`;}} style={{display:"grid",gap:19}}>
       <label>Your name<input required value={form.name} onChange={e=>set("name",e.target.value)} autoComplete="name"/></label>
       <label>Email address<input required type="email" value={form.email} onChange={e=>set("email",e.target.value)} autoComplete="email"/></label>
       <label>Anything else we should know?<textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Dream waves, board preferences, accommodations…" style={{minHeight:110,padding:14,borderRadius:12,border:"1px solid #dce5e1",font:"inherit"}}/></label>
-      <p style={{fontSize:12,lineHeight:1.6,color:"#60736b"}}>This opens your email app with a prepared inquiry. It does not submit a reservation or charge your card. Verify the recipient address before sending.</p>
+      <p style={{fontSize:12,lineHeight:1.6,color:"#60736b"}}>This opens your email app with a prepared inquiry. It does not submit a reservation or charge your card. Add your BookSurf contact email as the recipient before sending.</p>
       <div style={{display:"flex",gap:12,flexWrap:"wrap"}}><button type="button" className="button secondary" onClick={()=>setStep(0)}>← Back</button><button className="button" type="submit">Prepare my inquiry ↗</button></div>
      </form>}
     </div>
