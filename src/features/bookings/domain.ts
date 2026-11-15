@@ -3,7 +3,7 @@ import { attributionSchema } from "@/features/acquisition/attribution";
 
 export const bookingRequestSchema=z.object({
  name:z.string().trim().min(2).max(120),
- email:z.email().max(254),
+ email:z.string().trim().pipe(z.email().max(254)),
  dates:z.string().trim().min(3).max(250),
  guests:z.coerce.number().int().min(1).max(20),
  level:z.enum(["First timer","Beginner","Intermediate","Advanced","Mixed group"]),
