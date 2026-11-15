@@ -8,8 +8,9 @@ export async function signIn(formData: FormData) {
   const client = await createSupabaseServerClient();
   if (!client) redirect("/account?error=supabase");
   const { error } = await client.auth.signInWithPassword({ email, password });
-  if (error) redirect("/account?error=signin");
-  redirect("/surf/watch");
+  const forAdmin = formData.get("next") === "admin";
+  if (error) redirect(forAdmin ? "/account?next=admin&error=signin" : "/account?error=signin");
+  redirect(forAdmin ? "/admin" : "/surf/watch");
 }
 export async function signUp(formData: FormData) {
   const email = String(formData.get("email") ?? "");

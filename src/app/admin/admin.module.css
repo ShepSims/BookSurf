@@ -1,0 +1,34 @@
+.shell { width: min(1040px, calc(100% - 36px)); margin: 0 auto; padding: clamp(32px, 7vw, 78px) 0; }
+.heading { margin: 12px 0 28px; }
+.heading h1 { font-size: clamp(2.1rem, 5vw, 3.5rem); font-weight: 850; letter-spacing: -.055em; margin: 0; }
+.heading p { color: var(--muted); margin: 6px 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+.filters a, .badge { border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font-size: .82rem; font-weight: 700; }
+.filters a { background: white; }
+.filters a[aria-current] { background: var(--sea); color: white; border-color: var(--sea); }
+.panel { min-width: 0; padding: clamp(16px, 3vw, 28px); border: 1px solid var(--line); border-radius: 20px; background: white; }
+.panel h2 { margin: 0 0 16px; font-size: 1.25rem; font-weight: 800; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li + li { border-top: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; padding: 14px 8px; align-items: center; border-radius: 8px; overflow-wrap: anywhere; }
+.row:hover { background: var(--foam); }
+.row div { display: grid; gap: 4px; }
+.row div span { color: var(--muted); font-size: .88rem; }
+.badge { justify-self: start; background: var(--foam); }
+.badge[data-status="pending_operator"], .badge[data-status="awaiting_payment"] { color: #603c11; background: #faf0da; }
+.badge[data-status="confirmed"] { color: var(--sea); background: #dcefe5; }
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 18px; }
+.details dt { color: var(--muted); }
+.details dd { margin: 0; overflow-wrap: anywhere; }
+.details a, .back { color: var(--sea); text-decoration: underline; }
+.notes { white-space: pre-wrap; }
+.form, .form label { display: grid; gap: 8px; }
+.form { gap: 16px; }
+.form label { font-weight: 700; }
+.form textarea { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; resize: vertical; width: 100%; font: inherit; font-weight: 400; }
+.form .check { grid-template-columns: auto 1fr; align-items: start; font-size: .9rem; font-weight: 400; }
+.check input { width: 16px; min-height: 16px; margin-top: 2px; }
+.form button { justify-self: start; }
+.error { color: #9b2929; margin: 0 0 12px; }
+@media (max-width: 650px) { .columns, .row { grid-template-columns: 1fr; } .row { gap: 8px; } }

@@ -11,7 +11,7 @@ BookSurf is the merchant-facing booking marketplace and concierge. Local operato
 - `app/api/surf/booking-requests`: public intake only; no public list or update endpoint.
 - Supabase `surf_booking_requests`: source of truth. RLS enabled; no anon/authenticated direct table access.
 - Notification email: operational convenience, not the source of truth. The database write must succeed independently of notification delivery.
-- Future: operator adapters, quote versions, payments, outbox events, audit trail, admin dashboard.
+- Future: operator adapters, quote versions, payments, outbox events, audit trail.
 
 ## Production hardening backlog
 1. **Abuse protection:** edge rate limits by IP and identity, bot challenges, monitoring. Honeypot alone is insufficient.
@@ -19,7 +19,7 @@ BookSurf is the merchant-facing booking marketplace and concierge. Local operato
 3. **Transactional outbox:** write notification event in the same database transaction as booking creation; worker retries and dead-letter alerts.
 4. **Quote/payment:** operator confirms availability and an immutable priced quote; Stripe checkout uses server-side quote ID, never browser-supplied amounts. Stripe webhook signature verification and idempotent fulfillment.
 5. **Operator portal:** Supabase Auth, explicit operator membership and per-operator RLS, least-privilege staff roles.
-6. **Ops:** admin-only inbox, statuses, assignment, SLA timers, notes, activity history, exceptions, refund policy, reconciliation.
+6. **Ops:** assignment, SLA timers, activity history, exceptions, refund policy, reconciliation.
 7. **Privacy:** retention policy, data export/deletion, secrets only server-side, minimal PII in logs.
 8. **Observability:** structured request IDs, traceable transitions, alerts for stuck requests, failed notifications and payments.
 9. **Testing:** unit tests for transitions/validation, integration tests with isolated Supabase, webhook replay tests, and Playwright end-to-end booking tests. Run lint, typecheck, tests and build in CI before merging.
@@ -30,3 +30,11 @@ BookSurf is the merchant-facing booking marketplace and concierge. Local operato
 - No external integration should be required to onboard an operator.
 - Booking notifications can fail without losing the request.
 - Never expose service-role credentials to a browser.
+
+## Booking admin setup
+
+1. Apply the booking admin migration to the Supabase project that backs the site's existing `surf_booking_requests` table.
+2. In the deployment environment, set `BOOKSURF_ADMIN_USER_IDS` to the Supabase Auth user UUID of the BookSurf owner. Separate additional staff UUIDs with commas. Use the user ID shown in Supabase Authentication, rather than an email address. The app also uses its existing server-only `SUPABASE_SERVICE_ROLE_KEY`.
+3. Deploy, open `/admin` and sign in with that Supabase account. Verify that a separate regular account cannot open the inbox or a booking detail URL.
+
+The inbox reads the same requests submitted through the Baja form. To record a booking as confirmed, first move it through the quote and awaiting-payment stages, then verify payment and operator confirmation outside the app. Saving a status does not charge the customer or send an email. Internal notes are separate from the traveler's notes. Concurrent changes to the same booking are rejected so staff can review the latest state before saving again.
